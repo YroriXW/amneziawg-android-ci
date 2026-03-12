@@ -1,0 +1,114 @@
+name: Build latest amneziawg-android
+
+on:
+  workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Set build tag
+        run: echo "TAG=$(date +%d%m%Y)" >> "$GITHUB_ENV"
+
+      - name: Decode keystore from secret
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${KEYSTORE_B64}" ]]; then
+            echo "Missing secret ANDROID_KEYSTORE_BASE64" >&2
+            exit 1
+          fi
+          echo "${KEYSTORE_B64}" | base64 --decode > release.keystore.jks
+          echo "KEYSTORE_PATH=${PWD}/release.keystore.jks" >> "$GITHUB_ENV"
+
+      - name: Clone, build & locate
+        id: mainwork
+        run: |
+          set -euo pipefail
+          git clone https://github.com/amnezia-vpn/amneziawg-android.git -b master amneziawg-android
+          cd amneziawg-android
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace assembleRelease
+          built_file="${GITHUB_WORKSPACE}/amneziawg-android/ui/build/outputs/apk/release/ui-release-unsigned.apk"
+          if [[ ! -f "$built_file" ]]; then
+            echo "Built file not found" >&2
+            exit 1
+          fi
+          echo "built_file_gh=${built_file}" >> "$GITHUB_OUTPUT"
+
+      - name: Align and sign APK
+        id: sign
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          APK="${{ steps.mainwork.outputs.built_file_gh }}"
+          ALIGNED_APK="amneziawg-android-${{ env.TAG }}-aligned.apk"
+          SIGNED_APK="amneziawg-android-${{ env.TAG }}-signed.apk"
+
+          if [[ -z "${KEYSTORE_PASSWORD}" || -z "${KEY_ALIAS}" ]]; then
+            echo "Missing one of secrets: ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS" >&2
+            exit 1
+          fi
+
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -rV | head -1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -rV | head -1)"
+
+          "${ZIPALIGN}" -f -v 4 "${APK}" "${ALIGNED_APK}"
+
+          "${APKSIGNER}" sign \
+            --ks "${KEYSTORE_PATH}" \
+            --ks-key-alias "${KEY_ALIAS}" \
+            --ks-pass "pass:${KEYSTORE_PASSWORD}" \
+            --key-pass "pass:${KEY_PASSWORD}" \
+            --out "${SIGNED_APK}" \
+            "${ALIGNED_APK}"
+
+          "${APKSIGNER}" verify --verbose "${SIGNED_APK}"
+
+          echo "final_file=${SIGNED_APK}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            ${{ steps.sign.outputs.final_file }}
+          body: |
+            Automatic build ${{ env.TAG }}
+              - APK: ${{ steps.sign.outputs.final_file }}
+          prerelease: true
+          fail_on_unmatched_files: true
+
+      - name: Cleanup keystore
+        if: always()
+        run: rm -f "${KEYSTORE_PATH}"
