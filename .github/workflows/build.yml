@@ -88,8 +88,8 @@ jobs:
           "${APKSIGNER}" sign \
             --ks "${KEYSTORE_PATH}" \
             --ks-key-alias "${KEY_ALIAS}" \
-            --ks-pass "pass:${KEYSTORE_PASSWORD}" \
-            --key-pass "pass:${KEY_PASSWORD}" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
             --out "${SIGNED_APK}" \
             "${ALIGNED_APK}"
 
