@@ -44,7 +44,7 @@ jobs:
             echo "Missing secret ANDROID_KEYSTORE_BASE64" >&2
             exit 1
           fi
-          echo "${KEYSTORE_B64}" | base64 --decode > release.keystore.jks
+          printf '%s' "${KEYSTORE_B64}" | base64 --decode > release.keystore.jks
           echo "KEYSTORE_PATH=${PWD}/release.keystore.jks" >> "$GITHUB_ENV"
 
       - name: Clone, build & locate
