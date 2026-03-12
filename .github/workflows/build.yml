@@ -51,7 +51,7 @@ jobs:
         id: mainwork
         run: |
           set -euo pipefail
-          git clone https://github.com/amnezia-vpn/amneziawg-android.git -b master amneziawg-android
+          git clone --recurse-submodules https://github.com/amnezia-vpn/amneziawg-android.git -b master amneziawg-android
           cd amneziawg-android
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace assembleRelease
